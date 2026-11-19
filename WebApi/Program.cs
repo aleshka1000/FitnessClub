@@ -1,4 +1,5 @@
 using System.Text;
+using BusinessLogicLayer.DependencyInjection;
 using Common.Caching;
 using DataAccessLayer;
 using DataAccessLayer.Entities;
@@ -30,6 +31,7 @@ builder.Services.AddDbContext<ClubDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Postgres")));
 
 builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
+builder.Services.AddBusinessLogicLayer();
 
 builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
     ConnectionMultiplexer.Connect(builder.Configuration.GetConnectionString("Redis")!));
