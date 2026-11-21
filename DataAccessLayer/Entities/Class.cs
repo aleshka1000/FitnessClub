@@ -18,6 +18,8 @@ public class Class : IEntity
 
     public bool IsCancelled { get; set; }
 
+    public uint Version { get; set; }
+
     public Room Room { get; set; } = null!;
 
     public ICollection<Enrollment> Enrollments { get; set; } = new List<Enrollment>();

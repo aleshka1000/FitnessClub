@@ -11,4 +11,6 @@ public class Pass : IEntity
     public int RemainingVisits { get; set; }
 
     public DateOnly ValidUntil { get; set; }
+
+    public uint Version { get; set; }
 }

@@ -9,9 +9,11 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using Npgsql;
 using StackExchange.Redis;
 using WebApi.Auth;
 using WebApi.Middleware;
+using WebApi.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -38,6 +40,10 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
 
 builder.Services.AddSingleton<ICacheService>(provider =>
     new RedisCacheService(provider.GetRequiredService<IConnectionMultiplexer>(), TimeSpan.FromMinutes(5)));
+
+builder.Services.AddSingleton<IUserRateLimiter>(provider => new RedisUserRateLimiter(
+    provider.GetRequiredService<IConnectionMultiplexer>(),
+    $"fitnessclub:{new NpgsqlConnectionStringBuilder(builder.Configuration.GetConnectionString("Postgres")).Database}:requests"));
 
 builder.Services.AddSingleton<IPasswordHasher<User>, PasswordHasher<User>>();
 
@@ -72,7 +78,9 @@ app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseSwagger();
 app.UseSwaggerUI();
 
+app.UseRouting();
 app.UseAuthentication();
+app.UseMiddleware<UserRateLimitMiddleware>();
 app.UseAuthorization();
 
 app.MapControllers();

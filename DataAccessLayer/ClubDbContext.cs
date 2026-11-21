@@ -20,6 +20,8 @@ public class ClubDbContext : DbContext
 
     public DbSet<Pass> Passes => Set<Pass>();
 
+    public DbSet<IdempotencyRequest> IdempotencyRequests => Set<IdempotencyRequest>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(ClubDbContext).Assembly);

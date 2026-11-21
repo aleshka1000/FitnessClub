@@ -56,6 +56,12 @@ namespace DataAccessLayer.Migrations
                         .HasColumnType("text")
                         .HasColumnName("title");
 
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
                     b.HasKey("Id");
 
                     b.HasIndex("RoomId");
@@ -103,7 +109,67 @@ namespace DataAccessLayer.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("enrollments", (string)null);
+                    b.ToTable("enrollments", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_enrollments_seats", "seats >= 1");
+                        });
+                });
+
+            modelBuilder.Entity("DataAccessLayer.Entities.IdempotencyRequest", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<long>("ClassId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("class_id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<long?>("EnrollmentId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("enrollment_id");
+
+                    b.Property<byte[]>("KeyHash")
+                        .IsRequired()
+                        .HasColumnType("bytea")
+                        .HasColumnName("key_hash");
+
+                    b.Property<string>("Operation")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("operation");
+
+                    b.Property<string>("OriginalKey")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("original_key");
+
+                    b.Property<int>("Seats")
+                        .HasColumnType("integer")
+                        .HasColumnName("seats");
+
+                    b.Property<long>("UserId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EnrollmentId");
+
+                    b.HasIndex("UserId", "Operation", "KeyHash")
+                        .IsUnique();
+
+                    b.ToTable("idempotency_requests", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_idempotency_requests_key_hash", "octet_length(key_hash) = 32");
+                        });
                 });
 
             modelBuilder.Entity("DataAccessLayer.Entities.Pass", b =>
@@ -127,11 +193,21 @@ namespace DataAccessLayer.Migrations
                         .HasColumnType("date")
                         .HasColumnName("valid_until");
 
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
                     b.HasKey("Id");
 
-                    b.HasIndex("UserId");
+                    b.HasIndex("UserId")
+                        .IsUnique();
 
-                    b.ToTable("passes", (string)null);
+                    b.ToTable("passes", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_passes_remaining_visits", "remaining_visits >= 0");
+                        });
                 });
 
             modelBuilder.Entity("DataAccessLayer.Entities.Room", b =>
@@ -212,6 +288,20 @@ namespace DataAccessLayer.Migrations
                         .IsRequired();
 
                     b.Navigation("Class");
+                });
+
+            modelBuilder.Entity("DataAccessLayer.Entities.IdempotencyRequest", b =>
+                {
+                    b.HasOne("DataAccessLayer.Entities.Enrollment", null)
+                        .WithMany()
+                        .HasForeignKey("EnrollmentId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("DataAccessLayer.Entities.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("DataAccessLayer.Entities.Pass", b =>

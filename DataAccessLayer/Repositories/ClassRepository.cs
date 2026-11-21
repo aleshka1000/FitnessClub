@@ -17,4 +17,15 @@ public class ClassRepository : GenericRepository<Class>, IClassRepository
             .Include(x => x.Enrollments)
             .FirstOrDefaultAsync(x => x.Id == id, ct);
     }
+
+    public Task<Class?> GetIncludingCancelledAsync(long id, CancellationToken ct = default)
+    {
+        return _dbSet.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.Id == id, ct);
+    }
+
+    public void Touch(Class scheduledClass)
+    {
+        // решение: UPDATE неизменённой capacity обновляет xmin занятия при изменении связанных броней.
+        _dbSet.Entry(scheduledClass).Property(x => x.Capacity).IsModified = true;
+    }
 }
