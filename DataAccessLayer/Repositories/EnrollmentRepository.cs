@@ -1,14 +1,30 @@
 using Common.Database.Repositories.Generic;
 using DataAccessLayer.Entities;
+using DataAccessLayer.Models;
 using Microsoft.EntityFrameworkCore;
 
 namespace DataAccessLayer.Repositories;
 
 public class EnrollmentRepository : GenericRepository<Enrollment>, IEnrollmentRepository
 {
-    public EnrollmentRepository(DbSet<Enrollment> dbSet)
+    private readonly DbSet<Pass> _passes;
+
+    public EnrollmentRepository(DbSet<Enrollment> dbSet, DbSet<Pass> passes)
         : base(dbSet)
     {
+        _passes = passes;
+    }
+
+    public Task<EnrollmentDetailsData?> GetDetailsAsync(long id, long userId, CancellationToken ct = default)
+    {
+        return (from enrollment in _dbSet.IgnoreQueryFilters().AsNoTracking()
+                join pass in _passes on enrollment.UserId equals pass.UserId
+                where enrollment.Id == id && enrollment.UserId == userId
+                select new EnrollmentDetailsData(enrollment.Id, enrollment.Status, enrollment.Seats,
+                    enrollment.CreatedAt, enrollment.ClassId, enrollment.Class.Title, enrollment.Class.StartsAt,
+                    enrollment.Class.DurationMinutes, enrollment.Class.IsCancelled,
+                    enrollment.Class.RoomId, enrollment.Class.Room.Name, pass.RemainingVisits, pass.ValidUntil))
+            .SingleOrDefaultAsync(ct);
     }
 
     public async Task<List<Enrollment>> GetByUserAsync(long userId, CancellationToken ct = default)

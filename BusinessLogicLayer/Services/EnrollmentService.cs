@@ -13,6 +13,74 @@ public class EnrollmentService(IUnitOfWork unitOfWork, TimeProvider timeProvider
 {
     private const string Operation = "create-enrollment";
 
+    public async Task<Result<EnrollmentDetailsResult>> GetAsync(long userId, long id, CancellationToken ct = default)
+    {
+        var data = await unitOfWork.Enrollment.GetDetailsAsync(id, userId, ct);
+        return data is null
+            ? Result<EnrollmentDetailsResult>.Failure(new BusinessError(BusinessErrorKind.NotFound))
+            : Result<EnrollmentDetailsResult>.Success(EnrollmentDetailsResult.From(data));
+    }
+
+    public async Task<Result<EnrollmentDetailsResult>> ChangeSeatsAsync(long userId, long id, int seats,
+        CancellationToken ct = default)
+    {
+        if (seats < 1)
+            return Result<EnrollmentDetailsResult>.Failure(new BusinessError(BusinessErrorKind.Validation));
+
+        try
+        {
+            return await unitOfWork.ExecuteWithConcurrencyRetryAsync(async attemptCt =>
+            {
+                await using var transaction = await unitOfWork.BeginTransactionAsync(attemptCt);
+                var enrollment = await unitOfWork.Enrollment.GetForUserAsync(id, userId, attemptCt);
+                if (enrollment is null)
+                    return Result<EnrollmentDetailsResult>.Failure(new BusinessError(BusinessErrorKind.NotFound));
+
+                // решение: сначала проверяем отмену брони, затем отмену и начало занятия; абонемент проверяем только при увеличении.
+                if (enrollment.Status == "cancelled") return DetailsConflict("enrollment-cancelled");
+                var scheduledClass = await unitOfWork.Class.GetIncludingCancelledAsync(enrollment.ClassId, attemptCt);
+                if (scheduledClass is null)
+                    return Result<EnrollmentDetailsResult>.Failure(new BusinessError(BusinessErrorKind.NotFound));
+                if (scheduledClass.IsCancelled) return DetailsConflict("class-cancelled");
+                var now = timeProvider.GetUtcNow().UtcDateTime;
+                if (now >= scheduledClass.StartsAt) return DetailsConflict("class-started");
+
+                var delta = seats - enrollment.Seats;
+                if (delta != 0)
+                {
+                    var pass = await unitOfWork.Pass.GetByUserAsync(userId, attemptCt)
+                        ?? throw new InvalidOperationException("The user has no pass.");
+                    if (delta > 0)
+                    {
+                        if (pass.ValidUntil < DateOnly.FromDateTime(now)) return DetailsConflict("pass-expired");
+                        var booked = await unitOfWork.Enrollment.GetActiveSeatsAsync(scheduledClass.Id, attemptCt);
+                        if (booked + delta > scheduledClass.Capacity) return DetailsConflict("capacity-exceeded");
+                        if (pass.RemainingVisits < delta) return DetailsConflict("pass-exhausted");
+                    }
+
+                    enrollment.Seats = seats;
+                    pass.RemainingVisits -= delta;
+                    unitOfWork.Class.MarkForConcurrencyCheck(scheduledClass);
+                    await unitOfWork.SaveChangesAsync(attemptCt);
+                    // решение: уменьшение брони продвигает очередь в той же транзакции, как отмена.
+                    if (delta < 0)
+                        await promotionService.PromoteAsync(scheduledClass, TruncateToMicroseconds(now), attemptCt);
+                }
+
+                var result = await GetAsync(userId, id, attemptCt);
+                await transaction.CommitAsync(attemptCt);
+                return result;
+            }, ct);
+        }
+        catch (ConcurrencyRetriesExhaustedException)
+        {
+            return Result<EnrollmentDetailsResult>.Failure(new BusinessError(BusinessErrorKind.Unavailable));
+        }
+    }
+
+    private static Result<EnrollmentDetailsResult> DetailsConflict(string reason) =>
+        Result<EnrollmentDetailsResult>.Failure(new BusinessError(BusinessErrorKind.Conflict, reason));
+
     public async Task<Result<EnrollmentCreationResult>> CreateAsync(long userId, CreateEnrollmentCommand command,
         CancellationToken ct = default)
     {

@@ -66,6 +66,12 @@ namespace DataAccessLayer.Migrations
 
                     b.HasIndex("RoomId");
 
+                    b.HasIndex("StartsAt", "Id")
+                        .HasFilter("NOT is_cancelled");
+
+                    b.HasIndex("RoomId", "StartsAt", "Id")
+                        .HasFilter("NOT is_cancelled");
+
                     b.ToTable("classes", (string)null);
                 });
 

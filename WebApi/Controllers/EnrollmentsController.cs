@@ -25,6 +25,24 @@ public class EnrollmentsController : BaseApiController
         _waitlistService = waitlistService;
     }
 
+    [HttpGet("{id}")]
+    [ProducesResponseType(typeof(EnrollmentDetailsResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> Get([FromRoute] long id, CancellationToken ct)
+    {
+        var result = await _enrollmentService.GetAsync(CurrentUserId, id, ct);
+        return result.IsSuccess ? Ok(EnrollmentDetailsResponse.From(result.Value)) : BusinessProblem(result.Error);
+    }
+
+    [HttpPost("{id}/seats")]
+    [ProducesResponseType(typeof(EnrollmentDetailsResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> ChangeSeats([FromRoute] long id,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow), Required] ChangeSeatsRequest? request,
+        CancellationToken ct)
+    {
+        var result = await _enrollmentService.ChangeSeatsAsync(CurrentUserId, id, request!.Seats!.Value, ct);
+        return result.IsSuccess ? Ok(EnrollmentDetailsResponse.From(result.Value)) : BusinessProblem(result.Error);
+    }
+
     [HttpPost]
     [ProducesResponseType(typeof(CreateEnrollmentResponse), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]

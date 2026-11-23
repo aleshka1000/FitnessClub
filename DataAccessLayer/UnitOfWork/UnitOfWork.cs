@@ -32,10 +32,11 @@ public class UnitOfWork : UnitOfWorkBase, IUnitOfWork
 
     public IRoomRepository Room => GetRepository<Room, IRoomRepository>(set => new RoomRepository(set));
 
-    public IClassRepository Class => GetRepository<Class, IClassRepository>(set => new ClassRepository(set));
+    public IClassRepository Class =>
+        GetRepository<Class, IClassRepository>(set => new ClassRepository(set, DbContext.Set<Enrollment>()));
 
     public IEnrollmentRepository Enrollment =>
-        GetRepository<Enrollment, IEnrollmentRepository>(set => new EnrollmentRepository(set));
+        GetRepository<Enrollment, IEnrollmentRepository>(set => new EnrollmentRepository(set, DbContext.Set<Pass>()));
 
     public IPassRepository Pass => GetRepository<Pass, IPassRepository>(set => new PassRepository(set));
 
