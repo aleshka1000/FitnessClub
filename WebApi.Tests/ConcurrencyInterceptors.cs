@@ -7,13 +7,15 @@ namespace WebApi.Tests;
 
 internal sealed class ActiveSeatsBarrier : DbCommandInterceptor
 {
+    public bool Enabled { get; set; } = true;
+
     private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _arrived;
 
     public override async ValueTask<DbDataReader> ReaderExecutedAsync(DbCommand command,
         CommandExecutedEventData eventData, DbDataReader result, CancellationToken cancellationToken = default)
     {
-        if (command.CommandText.Contains("sum(", StringComparison.OrdinalIgnoreCase)
+        if (Enabled && command.CommandText.Contains("sum(", StringComparison.OrdinalIgnoreCase)
             && command.CommandText.Contains("enrollments", StringComparison.OrdinalIgnoreCase))
         {
             var arrived = Interlocked.Increment(ref _arrived);
@@ -29,6 +31,31 @@ internal sealed class ActiveSeatsBarrier : DbCommandInterceptor
             }
         }
 
+        return result;
+    }
+}
+
+internal sealed class ArmedSaveBarrier : SaveChangesInterceptor
+{
+    private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _arrived;
+
+    public long ClassId { get; set; }
+    public long AddedEnrollmentUserId { get; set; }
+
+    public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData eventData,
+        InterceptionResult<int> result, CancellationToken cancellationToken = default)
+    {
+        var context = eventData.Context!;
+        var matches = AddedEnrollmentUserId != 0
+            ? context.ChangeTracker.Entries<Enrollment>().Any(x => x.State == EntityState.Added && x.Entity.UserId == AddedEnrollmentUserId)
+            : ClassId != 0 && context.ChangeTracker.Entries<Class>().Any(x => x.State == EntityState.Modified && x.Entity.Id == ClassId);
+        if (matches)
+        {
+            var arrived = Interlocked.Increment(ref _arrived);
+            if (arrived == 2) _ready.TrySetResult();
+            if (arrived <= 2) await _ready.Task.WaitAsync(TimeSpan.FromSeconds(15), cancellationToken);
+        }
         return result;
     }
 }

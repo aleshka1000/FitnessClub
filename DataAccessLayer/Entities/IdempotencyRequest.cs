@@ -20,5 +20,7 @@ public class IdempotencyRequest : IEntity
 
     public long? EnrollmentId { get; set; }
 
+    public long? WaitlistEntryId { get; set; }
+
     public DateTime CreatedAt { get; set; }
 }

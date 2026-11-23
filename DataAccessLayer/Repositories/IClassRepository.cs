@@ -9,5 +9,5 @@ public interface IClassRepository : IGenericRepository<Class>
 
     Task<Class?> GetIncludingCancelledAsync(long id, CancellationToken ct = default);
 
-    void Touch(Class scheduledClass);
+    void MarkForConcurrencyCheck(Class scheduledClass);
 }

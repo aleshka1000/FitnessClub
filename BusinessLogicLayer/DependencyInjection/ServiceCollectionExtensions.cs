@@ -12,6 +12,7 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton(TimeProvider.System);
         services.AddScoped<IEnrollmentService, EnrollmentService>();
         services.AddScoped<IWaitlistService, WaitlistService>();
+        services.AddScoped<IWaitlistPromotionService, WaitlistPromotionService>();
         services.AddScoped<IScheduleService, ScheduleService>();
         services.AddScoped<IAnalyticsService, AnalyticsService>();
 

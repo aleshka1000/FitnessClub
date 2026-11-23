@@ -81,7 +81,7 @@ public abstract class UnitOfWorkBase : IUnitOfWorkBase
             {
                 return await operation(ct);
             }
-            catch (DbUpdateConcurrencyException exception)
+            catch (Exception exception) when (IsConcurrencyConflict(exception))
             {
                 DbContext.ChangeTracker.Clear();
 
@@ -96,4 +96,6 @@ public abstract class UnitOfWorkBase : IUnitOfWorkBase
 
         throw new InvalidOperationException("Unreachable concurrency retry state.");
     }
+
+    protected virtual bool IsConcurrencyConflict(Exception exception) => exception is DbUpdateConcurrencyException;
 }

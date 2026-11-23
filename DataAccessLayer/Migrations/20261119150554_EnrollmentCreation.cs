@@ -16,20 +16,6 @@ namespace DataAccessLayer.Migrations
                 name: "IX_passes_user_id",
                 table: "passes");
 
-            migrationBuilder.AddColumn<long>(
-                name: "version",
-                table: "passes",
-                type: "bigint",
-                nullable: false,
-                defaultValue: 0L);
-
-            migrationBuilder.AddColumn<long>(
-                name: "version",
-                table: "classes",
-                type: "bigint",
-                nullable: false,
-                defaultValue: 0L);
-
             migrationBuilder.CreateTable(
                 name: "idempotency_requests",
                 columns: table => new
@@ -108,14 +94,6 @@ namespace DataAccessLayer.Migrations
             migrationBuilder.DropCheckConstraint(
                 name: "CK_enrollments_seats",
                 table: "enrollments");
-
-            migrationBuilder.DropColumn(
-                name: "version",
-                table: "passes");
-
-            migrationBuilder.DropColumn(
-                name: "version",
-                table: "classes");
 
             migrationBuilder.CreateIndex(
                 name: "IX_passes_user_id",

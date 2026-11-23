@@ -136,9 +136,22 @@ internal sealed class EnrollmentTestHost : IAsyncDisposable
     }
 
     public async Task<HttpResponseMessage> PostJsonAsync(long? userId, string? json, string? key)
+        => await SendAsync(userId, "/enrollments", json, key);
+
+    public Task<HttpResponseMessage> JoinAsync(long userId, long classId, int seats = 1, string? key = null) =>
+        SendAsync(userId, "/enrollments/waitlist", JsonSerializer.Serialize(new { classId, seats }),
+            key ?? Guid.NewGuid().ToString("N"));
+
+    public Task<HttpResponseMessage> LeaveAsync(long userId, long id) =>
+        SendAsync(userId, $"/enrollments/waitlist/{id}/cancel");
+
+    public Task<HttpResponseMessage> CancelBookingAsync(long userId, long id) =>
+        SendAsync(userId, $"/enrollments/{id}/cancel");
+
+    public async Task<HttpResponseMessage> SendAsync(long? userId, string path, string? json = null, string? key = null)
     {
         using var client = Client(userId);
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/enrollments");
+        using var request = new HttpRequestMessage(HttpMethod.Post, path);
 
         if (json is not null)
         {

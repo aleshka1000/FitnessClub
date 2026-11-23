@@ -23,7 +23,7 @@ public class ClassRepository : GenericRepository<Class>, IClassRepository
         return _dbSet.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.Id == id, ct);
     }
 
-    public void Touch(Class scheduledClass)
+    public void MarkForConcurrencyCheck(Class scheduledClass)
     {
         // решение: UPDATE неизменённой capacity обновляет xmin занятия при изменении связанных броней.
         _dbSet.Entry(scheduledClass).Property(x => x.Capacity).IsModified = true;

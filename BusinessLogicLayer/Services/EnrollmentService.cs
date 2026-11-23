@@ -8,7 +8,8 @@ using DataAccessLayer.UnitOfWork;
 
 namespace BusinessLogicLayer.Services;
 
-public class EnrollmentService(IUnitOfWork unitOfWork, TimeProvider timeProvider) : IEnrollmentService
+public class EnrollmentService(IUnitOfWork unitOfWork, TimeProvider timeProvider,
+    IWaitlistPromotionService promotionService) : IEnrollmentService
 {
     private const string Operation = "create-enrollment";
 
@@ -101,7 +102,7 @@ public class EnrollmentService(IUnitOfWork unitOfWork, TimeProvider timeProvider
             return Conflict("pass-exhausted");
         }
 
-        unitOfWork.Class.Touch(scheduledClass);
+        unitOfWork.Class.MarkForConcurrencyCheck(scheduledClass);
         pass.RemainingVisits -= command.Seats;
 
         var enrollment = await unitOfWork.Enrollment.CreateAsync(new Enrollment
@@ -123,6 +124,53 @@ public class EnrollmentService(IUnitOfWork unitOfWork, TimeProvider timeProvider
 
     private static Result<EnrollmentCreationResult> Conflict(string reason) =>
         Result<EnrollmentCreationResult>.Failure(new BusinessError(BusinessErrorKind.Conflict, reason));
+
+    public async Task<Result<EnrollmentCancellationResult>> CancelAsync(long userId, long id,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            return await unitOfWork.ExecuteWithConcurrencyRetryAsync(async attemptCt =>
+            {
+                await using var transaction = await unitOfWork.BeginTransactionAsync(attemptCt);
+                var enrollment = await unitOfWork.Enrollment.GetForUserAsync(id, userId, attemptCt);
+                if (enrollment is null)
+                    return Result<EnrollmentCancellationResult>.Failure(new BusinessError(BusinessErrorKind.NotFound));
+
+                // решение: повторная отмена ничего не начисляет; исторический размер возврата не храним.
+                if (enrollment.Status == "cancelled")
+                    return Result<EnrollmentCancellationResult>.Success(new EnrollmentCancellationResult(id, "cancelled", 0));
+
+                var scheduledClass = await unitOfWork.Class.GetIncludingCancelledAsync(enrollment.ClassId, attemptCt);
+                if (scheduledClass is null)
+                    return Result<EnrollmentCancellationResult>.Failure(new BusinessError(BusinessErrorKind.NotFound));
+                var now = timeProvider.GetUtcNow().UtcDateTime;
+                if (!scheduledClass.IsCancelled && now >= scheduledClass.StartsAt)
+                    return Result<EnrollmentCancellationResult>.Failure(new BusinessError(BusinessErrorKind.Conflict, "class-started"));
+
+                var refunded = scheduledClass.IsCancelled || scheduledClass.StartsAt - now >= TimeSpan.FromHours(2)
+                    ? enrollment.Seats : 0;
+                if (refunded > 0)
+                {
+                    var pass = await unitOfWork.Pass.GetByUserAsync(userId, attemptCt)
+                        ?? throw new InvalidOperationException("The user has no pass.");
+                    pass.RemainingVisits += refunded;
+                }
+
+                enrollment.Status = "cancelled";
+                enrollment.CancelledAt = TruncateToMicroseconds(now);
+                unitOfWork.Class.MarkForConcurrencyCheck(scheduledClass);
+                await unitOfWork.SaveChangesAsync(attemptCt);
+                await promotionService.PromoteAsync(scheduledClass, enrollment.CancelledAt.Value, attemptCt);
+                await transaction.CommitAsync(attemptCt);
+                return Result<EnrollmentCancellationResult>.Success(new EnrollmentCancellationResult(id, "cancelled", refunded));
+            }, ct);
+        }
+        catch (ConcurrencyRetriesExhaustedException)
+        {
+            return Result<EnrollmentCancellationResult>.Failure(new BusinessError(BusinessErrorKind.Unavailable));
+        }
+    }
 
     private static Result<EnrollmentCreationResult> Success(Enrollment enrollment) =>
         Result<EnrollmentCreationResult>.Success(new EnrollmentCreationResult(enrollment.Id, enrollment.ClassId,

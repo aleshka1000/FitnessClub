@@ -22,6 +22,8 @@ public class ClubDbContext : DbContext
 
     public DbSet<IdempotencyRequest> IdempotencyRequests => Set<IdempotencyRequest>();
 
+    public DbSet<WaitlistEntry> WaitlistEntries => Set<WaitlistEntry>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(ClubDbContext).Assembly);
