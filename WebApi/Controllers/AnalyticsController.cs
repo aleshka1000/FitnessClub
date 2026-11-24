@@ -28,11 +28,17 @@ public class AnalyticsController : BaseApiController
     public async Task<IActionResult> GetLoad(
         [FromQuery, Required, ModelBinder(BinderType = typeof(QueryDateModelBinder))] DateOnly? from,
         [FromQuery, Required, ModelBinder(BinderType = typeof(QueryDateModelBinder))] DateOnly? to,
-        [FromQuery] long? roomId, CancellationToken ct)
+        [FromQuery] long? roomId,
+        CancellationToken ct)
     {
         var result = await _analyticsService.GetLoadAsync(new LoadQuery(from!.Value, to!.Value, roomId), ct);
-        if (!result.IsSuccess) return BusinessProblem(result.Error);
+
+        if (!result.IsSuccess)
+            return BusinessProblem(result.Error);
+
         return Ok(new LoadResponse(result.Value.Items.Select(x => new RoomLoadResponse(x.Date,
-            new RoomResponse(x.Room.Id, x.Room.Name), x.ClassesCount, x.TotalCapacity, x.BookedSeats)).ToArray()));
+                        new RoomResponse(
+                            x.Room.Id,
+                            x.Room.Name), x.ClassesCount, x.TotalCapacity, x.BookedSeats)).ToArray()));
     }
 }

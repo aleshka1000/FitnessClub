@@ -8,9 +8,12 @@ public class WaitlistPromotionService(IUnitOfWork unitOfWork) : IWaitlistPromoti
 {
     public async Task PromoteAsync(Class scheduledClass, DateTime now, CancellationToken ct = default)
     {
-        if (scheduledClass.IsCancelled || now >= scheduledClass.StartsAt) return;
+        if (scheduledClass.IsCancelled || now >= scheduledClass.StartsAt)
+            return;
 
-        var freeSeats = scheduledClass.Capacity - await unitOfWork.Enrollment.GetActiveSeatsAsync(scheduledClass.Id, ct);
+        var freeSeats = scheduledClass.Capacity - await unitOfWork.Enrollment.GetActiveSeatsAsync(
+            scheduledClass.Id,
+            ct);
         DateTime? afterCreatedAt = null;
         long afterId = 0;
         var stop = false;
@@ -19,8 +22,10 @@ public class WaitlistPromotionService(IUnitOfWork unitOfWork) : IWaitlistPromoti
         {
             var batch = await unitOfWork.Waitlist.GetWaitingBatchAsync(scheduledClass.Id, afterCreatedAt, afterId, ct);
 
-            // решение: строгая очередь; при нехватке мест первому его абонемент вообще не читаем.
-            if (batch.Count == 0 || batch[0].Seats > freeSeats) break;
+            // решение: если первому не хватает мест, останавливаем очередь до проверки его абонемента.
+            // Так меньшие заявки не обходят первого, даже если его абонемент уже истёк.
+            if (batch.Count == 0 || batch[0].Seats > freeSeats)
+                break;
 
             var userIds = batch.Where(x => x.Seats <= freeSeats).Select(x => x.UserId).Distinct().ToArray();
             var passes = (await unitOfWork.Pass.GetByUsersAsync(userIds, ct)).ToDictionary(x => x.UserId);
@@ -39,7 +44,8 @@ public class WaitlistPromotionService(IUnitOfWork unitOfWork) : IWaitlistPromoti
 
                 if (reason is not null)
                 {
-                    // решение: неподходящий абонемент окончательно завершает ожидание, сохраняя причину в истории.
+                    // решение: неподходящий абонемент завершает ожидание как skipped, чтобы не блокировать следующих.
+                    // Причину сохраняем в истории; автоматически в очередь запись не возвращаем.
                     entry.Status = "skipped";
                     entry.SkipReason = reason;
                 }
@@ -47,13 +53,13 @@ public class WaitlistPromotionService(IUnitOfWork unitOfWork) : IWaitlistPromoti
                 {
                     pass.RemainingVisits -= entry.Seats;
                     entry.PromotedEnrollment = await unitOfWork.Enrollment.CreateAsync(new Enrollment
-                    {
-                        UserId = entry.UserId,
-                        ClassId = entry.ClassId,
-                        Seats = entry.Seats,
-                        Status = "active",
-                        CreatedAt = now
-                    }, ct);
+                        {
+                            UserId = entry.UserId,
+                            ClassId = entry.ClassId,
+                            Seats = entry.Seats,
+                            Status = "active",
+                            CreatedAt = now
+                        }, ct);
                     entry.Status = "promoted";
                     freeSeats -= entry.Seats;
                 }

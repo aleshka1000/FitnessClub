@@ -4,7 +4,7 @@ namespace WebApi.RateLimiting;
 
 public sealed class RedisUserRateLimiter(IConnectionMultiplexer connection, string keyPrefix) : IUserRateLimiter
 {
-    // решение: скользящая минута и время Redis дают общий атомарный лимит всем экземплярам API.
+    // решение: Lua атомарно считает запросы за последние 60 секунд; время Redis исключает расхождения часов API.
     private const string Script = """
         local time = redis.call('TIME')
         local now = tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
@@ -22,6 +22,7 @@ public sealed class RedisUserRateLimiter(IConnectionMultiplexer connection, stri
         ct.ThrowIfCancellationRequested();
         var result = await connection.GetDatabase().ScriptEvaluateAsync(Script,
             new RedisKey[] { $"{keyPrefix}:{userId}" }, new RedisValue[] { Guid.NewGuid().ToString("N") });
+
         return (long)result == 1;
     }
 }

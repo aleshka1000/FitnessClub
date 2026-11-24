@@ -22,6 +22,7 @@ public sealed class Result<T>
     public static Result<T> Failure(BusinessError error)
     {
         ArgumentNullException.ThrowIfNull(error);
+
         return new Result<T>(default, error);
     }
 }

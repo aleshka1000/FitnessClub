@@ -13,11 +13,15 @@ public sealed class InMemoryFallbackRateLimiter(TimeProvider timeProvider) : IUs
         {
             ct.ThrowIfCancellationRequested();
             var now = timeProvider.GetTimestamp();
+
             while (_requests.TryPeek(out var oldest) && timeProvider.GetElapsedTime(oldest, now) >= Window)
                 _requests.Dequeue();
-            if (_requests.Count >= Limit) return Task.FromResult(false);
+
+            if (_requests.Count >= Limit)
+                return Task.FromResult(false);
 
             _requests.Enqueue(now);
+
             return Task.FromResult(true);
         }
     }

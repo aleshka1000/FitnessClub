@@ -10,6 +10,9 @@ public interface IWaitlistRepository : IGenericRepository<WaitlistEntry>
     Task<bool> IsWaitingAsync(long userId, long classId, CancellationToken ct = default);
     Task<WaitlistEntry?> GetForUserAsync(long id, long userId, CancellationToken ct = default);
     Task<WaitlistSnapshot?> GetWithPositionAsync(long id, long userId, CancellationToken ct = default);
-    Task<List<WaitlistEntry>> GetWaitingBatchAsync(long classId, DateTime? afterCreatedAt, long afterId,
+    Task<List<WaitlistEntry>> GetWaitingBatchAsync(
+        long classId,
+        DateTime? afterCreatedAt,
+        long afterId,
         CancellationToken ct = default);
 }

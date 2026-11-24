@@ -12,9 +12,13 @@ using StackExchange.Redis;
 
 namespace BusinessLogicLayer.Services;
 
-public class EnrollmentService(IUnitOfWork unitOfWork, TimeProvider timeProvider,
-    IWaitlistPromotionService promotionService, ICacheService cache,
-    EnrollmentCardCacheOptions cacheOptions, ILogger<EnrollmentService> logger) : IEnrollmentService
+public class EnrollmentService(
+    IUnitOfWork unitOfWork,
+    TimeProvider timeProvider,
+    IWaitlistPromotionService promotionService,
+    ICacheService cache,
+    EnrollmentCardCacheOptions cacheOptions,
+    ILogger<EnrollmentService> logger) : IEnrollmentService
 {
     private const string Operation = "create-enrollment";
     private static readonly TimeSpan CardCacheTtl = TimeSpan.FromMinutes(5);
@@ -22,22 +26,28 @@ public class EnrollmentService(IUnitOfWork unitOfWork, TimeProvider timeProvider
     public async Task<Result<EnrollmentDetailsResult>> GetAsync(long userId, long id, CancellationToken ct = default)
     {
         var versions = await unitOfWork.Enrollment.GetCardVersionsAsync(id, userId, ct);
+
         if (versions is null)
             return Result<EnrollmentDetailsResult>.Failure(new BusinessError(BusinessErrorKind.NotFound));
 
         var key = GetCardCacheKey(userId, id, versions.EnrollmentVersion, versions.PassVersion);
         var cached = await GetCachedCardAsync(key, ct);
+
         if (cached is not null)
             return Result<EnrollmentDetailsResult>.Success(cached);
 
         var data = await unitOfWork.Enrollment.GetDetailsAsync(id, userId, ct);
+
         if (data is null)
             return Result<EnrollmentDetailsResult>.Failure(new BusinessError(BusinessErrorKind.NotFound));
 
         var result = EnrollmentDetailsResult.From(data);
-        // решение: ключ заполнения строим по версиям из того же SQL, что вернул карточку.
+
+        // решение: ключ строим по версиям из полной выборки карточки:
+        // после предварительной проверки бронь или абонемент могли измениться.
         key = GetCardCacheKey(userId, id, data.EnrollmentVersion, data.PassVersion);
         await CacheCardAsync(key, result, ct);
+
         return Result<EnrollmentDetailsResult>.Success(result);
     }
 
@@ -52,8 +62,9 @@ public class EnrollmentService(IUnitOfWork unitOfWork, TimeProvider timeProvider
         }
         catch (Exception exception) when (exception is RedisException or RedisTimeoutException or JsonException)
         {
-            // решение: ошибка кэша не мешает чтению карточки из PostgreSQL.
+            // решение: ошибку кэша считаем промахом, чтобы его сбой не прерывал чтение карточки.
             logger.LogWarning(exception, "Could not read enrollment card cache {Key}.", key);
+
             return null;
         }
     }
@@ -70,7 +81,10 @@ public class EnrollmentService(IUnitOfWork unitOfWork, TimeProvider timeProvider
         }
     }
 
-    public async Task<Result<EnrollmentDetailsResult>> ChangeSeatsAsync(long userId, long id, int seats,
+    public async Task<Result<EnrollmentDetailsResult>> ChangeSeatsAsync(
+        long userId,
+        long id,
+        int seats,
         CancellationToken ct = default)
     {
         if (seats < 1)
@@ -82,27 +96,41 @@ public class EnrollmentService(IUnitOfWork unitOfWork, TimeProvider timeProvider
             {
                 await using var transaction = await unitOfWork.BeginTransactionAsync(attemptCt);
                 var enrollment = await unitOfWork.Enrollment.GetForUserAsync(id, userId, attemptCt);
+
                 if (enrollment is null)
                     return Result<EnrollmentDetailsResult>.Failure(new BusinessError(BusinessErrorKind.NotFound));
 
-                // решение: сначала проверяем отмену брони, затем отмену и начало занятия; абонемент проверяем только при увеличении.
-                if (enrollment.Status == "cancelled") return DetailsConflict("enrollment-cancelled");
+                // решение: при нескольких причинах отказа отмена брони имеет приоритет над состоянием занятия.
+                if (enrollment.Status == "cancelled")
+                    return DetailsConflict("enrollment-cancelled");
+
                 var scheduledClass = await unitOfWork.Class.GetIncludingCancelledAsync(enrollment.ClassId, attemptCt);
+
                 if (scheduledClass is null)
                     return Result<EnrollmentDetailsResult>.Failure(new BusinessError(BusinessErrorKind.NotFound));
+
                 var now = timeProvider.GetUtcNow().UtcDateTime;
                 var classError = ValidateClassState(scheduledClass, now);
+
                 if (classError is not null)
                     return Result<EnrollmentDetailsResult>.Failure(classError);
 
                 var delta = seats - enrollment.Seats;
+
                 if (delta != 0)
                 {
                     var pass = await unitOfWork.Pass.GetByUserAsync(userId, attemptCt)
                         ?? throw new InvalidOperationException("The user has no pass.");
+
                     if (delta > 0)
                     {
-                        var allocationError = await ValidateSeatAllocationAsync(scheduledClass, pass, delta, now, attemptCt);
+                        var allocationError = await ValidateSeatAllocationAsync(
+                            scheduledClass,
+                            pass,
+                            delta,
+                            now,
+                            attemptCt);
+
                         if (allocationError is not null)
                             return Result<EnrollmentDetailsResult>.Failure(allocationError);
                     }
@@ -111,17 +139,21 @@ public class EnrollmentService(IUnitOfWork unitOfWork, TimeProvider timeProvider
                     pass.RemainingVisits -= delta;
                     unitOfWork.Class.MarkForConcurrencyCheck(scheduledClass);
                     await unitOfWork.SaveChangesAsync(attemptCt);
-                    // решение: уменьшение брони продвигает очередь в той же транзакции, как отмена.
+
+                    // решение: уменьшение брони тоже запускает очередь, чтобы свободные места сразу достались ожидающим.
                     if (delta < 0)
                         await promotionService.PromoteAsync(scheduledClass, TruncateToMicroseconds(now), attemptCt);
                 }
 
-                // решение: незавершённую транзакцию изменения мест в кэш не публикуем.
+                // решение: после продвижения очереди читаем карточку из БД — оно могло изменить абонемент клиента.
+                // Кэш обходим, чтобы не записывать в Redis данные до успешной фиксации транзакции.
                 var data = await unitOfWork.Enrollment.GetDetailsAsync(id, userId, attemptCt);
                 var result = data is null
                     ? Result<EnrollmentDetailsResult>.Failure(new BusinessError(BusinessErrorKind.NotFound))
                     : Result<EnrollmentDetailsResult>.Success(EnrollmentDetailsResult.From(data));
+
                 await transaction.CommitAsync(attemptCt);
+
                 return result;
             }, ct);
         }
@@ -134,7 +166,9 @@ public class EnrollmentService(IUnitOfWork unitOfWork, TimeProvider timeProvider
     private static Result<EnrollmentDetailsResult> DetailsConflict(string reason) =>
         Result<EnrollmentDetailsResult>.Failure(new BusinessError(BusinessErrorKind.Conflict, reason));
 
-    public async Task<Result<EnrollmentCreationResult>> CreateAsync(long userId, CreateEnrollmentCommand command,
+    public async Task<Result<EnrollmentCreationResult>> CreateAsync(
+        long userId,
+        CreateEnrollmentCommand command,
         CancellationToken ct = default)
     {
         if (command.Seats < 1 || string.IsNullOrWhiteSpace(command.IdempotencyKey))
@@ -155,8 +189,11 @@ public class EnrollmentService(IUnitOfWork unitOfWork, TimeProvider timeProvider
         }
     }
 
-    private async Task<Result<EnrollmentCreationResult>> CreateAttemptAsync(long userId,
-        CreateEnrollmentCommand command, byte[] keyHash, CancellationToken ct)
+    private async Task<Result<EnrollmentCreationResult>> CreateAttemptAsync(
+        long userId,
+        CreateEnrollmentCommand command,
+        byte[] keyHash,
+        CancellationToken ct)
     {
         await using var transaction = await unitOfWork.BeginTransactionAsync(ct);
         var claim = await unitOfWork.Idempotency.ClaimAsync(userId, Operation, command.IdempotencyKey, keyHash,
@@ -164,12 +201,13 @@ public class EnrollmentService(IUnitOfWork unitOfWork, TimeProvider timeProvider
 
         if (!claim.IsNew)
         {
+            // решение: тот же ключ с другими classId или seats отклоняем с idempotency-key-reused.
             if (claim.Request.ClassId != command.ClassId || claim.Request.Seats != command.Seats)
             {
                 return Conflict("idempotency-key-reused");
             }
 
-            // решение: повтор создания возвращает текущее состояние связанной брони
+            // решение: при повторе возвращаем текущее состояние брони, не сохраняя снимок первоначального ответа.
             var existing = await unitOfWork.Enrollment.GetForUserAsync(
                 claim.Request.EnrollmentId ?? throw new InvalidOperationException("Incomplete idempotency record."),
                 userId, ct);
@@ -180,6 +218,7 @@ public class EnrollmentService(IUnitOfWork unitOfWork, TimeProvider timeProvider
             }
 
             await transaction.CommitAsync(ct);
+
             return Success(existing);
         }
 
@@ -192,8 +231,9 @@ public class EnrollmentService(IUnitOfWork unitOfWork, TimeProvider timeProvider
 
         var now = timeProvider.GetUtcNow().UtcDateTime;
 
-        // решение: при нескольких отказах сначала проверяем занятие, затем срок, вместимость и остаток посещений.
+        // решение: при нескольких отказах приоритет — отмена занятия, начало, срок абонемента, места, посещения.
         var classError = ValidateClassState(scheduledClass, now);
+
         if (classError is not null)
             return Result<EnrollmentCreationResult>.Failure(classError);
 
@@ -201,6 +241,7 @@ public class EnrollmentService(IUnitOfWork unitOfWork, TimeProvider timeProvider
             ?? throw new InvalidOperationException("The user has no pass.");
 
         var allocationError = await ValidateSeatAllocationAsync(scheduledClass, pass, command.Seats, now, ct);
+
         if (allocationError is not null)
             return Result<EnrollmentCreationResult>.Failure(allocationError);
 
@@ -208,17 +249,18 @@ public class EnrollmentService(IUnitOfWork unitOfWork, TimeProvider timeProvider
         pass.RemainingVisits -= command.Seats;
 
         var enrollment = await unitOfWork.Enrollment.CreateAsync(new Enrollment
-        {
-            UserId = userId,
-            ClassId = scheduledClass.Id,
-            Seats = command.Seats,
-            Status = "active",
-            CreatedAt = TruncateToMicroseconds(now)
-        }, ct);
+            {
+                UserId = userId,
+                ClassId = scheduledClass.Id,
+                Seats = command.Seats,
+                Status = "active",
+                CreatedAt = TruncateToMicroseconds(now)
+            }, ct);
 
         await unitOfWork.SaveChangesAsync(ct);
         claim.Request.EnrollmentId = enrollment.Id;
         await unitOfWork.SaveChangesAsync(ct);
+
         await transaction.CommitAsync(ct);
 
         return Success(enrollment);
@@ -227,7 +269,9 @@ public class EnrollmentService(IUnitOfWork unitOfWork, TimeProvider timeProvider
     private static Result<EnrollmentCreationResult> Conflict(string reason) =>
         Result<EnrollmentCreationResult>.Failure(new BusinessError(BusinessErrorKind.Conflict, reason));
 
-    public async Task<Result<EnrollmentCancellationResult>> CancelAsync(long userId, long id,
+    public async Task<Result<EnrollmentCancellationResult>> CancelAsync(
+        long userId,
+        long id,
         CancellationToken ct = default)
     {
         try
@@ -236,22 +280,32 @@ public class EnrollmentService(IUnitOfWork unitOfWork, TimeProvider timeProvider
             {
                 await using var transaction = await unitOfWork.BeginTransactionAsync(attemptCt);
                 var enrollment = await unitOfWork.Enrollment.GetForUserAsync(id, userId, attemptCt);
+
                 if (enrollment is null)
                     return Result<EnrollmentCancellationResult>.Failure(new BusinessError(BusinessErrorKind.NotFound));
 
-                // решение: повторная отмена ничего не начисляет; исторический размер возврата не храним.
+                // решение: при повторной отмене возвращаем refundedVisits: 0, поскольку первый размер возврата не сохраняем.
                 if (enrollment.Status == "cancelled")
-                    return Result<EnrollmentCancellationResult>.Success(new EnrollmentCancellationResult(id, "cancelled", 0));
+                    return Result<EnrollmentCancellationResult>.Success(new EnrollmentCancellationResult(
+                            id,
+                            "cancelled",
+                            0));
 
                 var scheduledClass = await unitOfWork.Class.GetIncludingCancelledAsync(enrollment.ClassId, attemptCt);
+
                 if (scheduledClass is null)
                     return Result<EnrollmentCancellationResult>.Failure(new BusinessError(BusinessErrorKind.NotFound));
+
                 var now = timeProvider.GetUtcNow().UtcDateTime;
+
                 if (!scheduledClass.IsCancelled && now >= scheduledClass.StartsAt)
-                    return Result<EnrollmentCancellationResult>.Failure(new BusinessError(BusinessErrorKind.Conflict, "class-started"));
+                    return Result<EnrollmentCancellationResult>.Failure(new BusinessError(
+                            BusinessErrorKind.Conflict,
+                            "class-started"));
 
                 var refunded = scheduledClass.IsCancelled || scheduledClass.StartsAt - now >= TimeSpan.FromHours(2)
                     ? enrollment.Seats : 0;
+
                 if (refunded > 0)
                 {
                     var pass = await unitOfWork.Pass.GetByUserAsync(userId, attemptCt)
@@ -264,8 +318,13 @@ public class EnrollmentService(IUnitOfWork unitOfWork, TimeProvider timeProvider
                 unitOfWork.Class.MarkForConcurrencyCheck(scheduledClass);
                 await unitOfWork.SaveChangesAsync(attemptCt);
                 await promotionService.PromoteAsync(scheduledClass, enrollment.CancelledAt.Value, attemptCt);
+
                 await transaction.CommitAsync(attemptCt);
-                return Result<EnrollmentCancellationResult>.Success(new EnrollmentCancellationResult(id, "cancelled", refunded));
+
+                return Result<EnrollmentCancellationResult>.Success(new EnrollmentCancellationResult(
+                        id,
+                        "cancelled",
+                        refunded));
             }, ct);
         }
         catch (ConcurrencyRetriesExhaustedException)
@@ -278,32 +337,41 @@ public class EnrollmentService(IUnitOfWork unitOfWork, TimeProvider timeProvider
     {
         if (scheduledClass.IsCancelled)
             return new BusinessError(BusinessErrorKind.Conflict, "class-cancelled");
+
         if (now >= scheduledClass.StartsAt)
             return new BusinessError(BusinessErrorKind.Conflict, "class-started");
+
         return null;
     }
 
-    private async Task<BusinessError?> ValidateSeatAllocationAsync(Class scheduledClass, Pass pass,
-        int additionalSeats, DateTime now, CancellationToken ct)
+    private async Task<BusinessError?> ValidateSeatAllocationAsync(
+        Class scheduledClass,
+        Pass pass,
+        int additionalSeats,
+        DateTime now,
+        CancellationToken ct)
     {
         if (pass.ValidUntil < DateOnly.FromDateTime(now))
             return new BusinessError(BusinessErrorKind.Conflict, "pass-expired");
 
         var activeSeats = await unitOfWork.Enrollment.GetActiveSeatsAsync(scheduledClass.Id, ct);
+
         if (activeSeats + additionalSeats > scheduledClass.Capacity)
             return new BusinessError(BusinessErrorKind.Conflict, "capacity-exceeded");
+
         if (pass.RemainingVisits < additionalSeats)
             return new BusinessError(BusinessErrorKind.Conflict, "pass-exhausted");
+
         return null;
     }
 
     private static Result<EnrollmentCreationResult> Success(Enrollment enrollment) =>
         Result<EnrollmentCreationResult>.Success(new EnrollmentCreationResult(enrollment.Id, enrollment.ClassId,
-            enrollment.Seats, enrollment.Status, enrollment.CreatedAt));
+                enrollment.Seats, enrollment.Status, enrollment.CreatedAt));
 
     private static DateTime TruncateToMicroseconds(DateTime value)
     {
-        // решение: createdAt в памяти и PostgreSQL имеет одинаковую микросекундную точность.
+        // решение: усекаем время до микросекунд, чтобы createdAt из памяти и PostgreSQL совпадал.
         return new DateTime(value.Ticks - value.Ticks % TimeSpan.TicksPerMicrosecond, DateTimeKind.Utc);
     }
 }

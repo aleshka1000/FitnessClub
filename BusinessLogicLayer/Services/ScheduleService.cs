@@ -18,8 +18,8 @@ public class ScheduleService(IUnitOfWork unitOfWork) : IScheduleService
         var rows = await unitOfWork.Class.GetScheduleAsync(userId, query.From, query.To, query.RoomId,
             cursor?.StartsAt, cursor?.Id ?? 0, query.Limit + 1, ct);
         var items = rows.Take(query.Limit).Select(x => new ScheduleItemResult(x.ClassId, x.Title,
-            x.StartsAt, x.DurationMinutes, new RoomResult(x.RoomId, x.RoomName), x.Capacity,
-            (int)Math.Max(0, x.Capacity - x.BookedSeats), (int)x.MySeats)).ToArray();
+                x.StartsAt, x.DurationMinutes, new RoomResult(x.RoomId, x.RoomName), x.Capacity,
+                (int)Math.Max(0, x.Capacity - x.BookedSeats), (int)x.MySeats)).ToArray();
         var token = rows.Count > query.Limit
             ? CreateContinuationToken(query, items[^1])
             : null;
@@ -30,7 +30,9 @@ public class ScheduleService(IUnitOfWork unitOfWork) : IScheduleService
     private static bool TryParseContinuationToken(ScheduleQuery query, out ScheduleCursor? cursor)
     {
         cursor = null;
-        if (query.ContinuationToken is null) return true;
+
+        if (query.ContinuationToken is null)
+            return true;
 
         try
         {
@@ -50,15 +52,21 @@ public class ScheduleService(IUnitOfWork unitOfWork) : IScheduleService
 
     private static string CreateContinuationToken(ScheduleQuery query, ScheduleItemResult lastItem)
     {
-        // решение: курсор хранит пару (startsAt, id) и фильтры; размер страницы разрешено менять.
+        // решение: токен Base64URL хранит позицию и фильтры, чтобы не продолжать выборку с другими условиями.
+        // Размер страницы в токен не включаем, разрешая менять его между запросами.
         return Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(new ScheduleCursor(1,
-                query.From, query.To, query.RoomId, lastItem.StartsAt, lastItem.ClassId)))
+                    query.From, query.To, query.RoomId, lastItem.StartsAt, lastItem.ClassId)))
             .TrimEnd('=').Replace('+', '-').Replace('/', '_');
     }
 
     private static Result<ScheduleResult> Invalid() =>
         Result<ScheduleResult>.Failure(new BusinessError(BusinessErrorKind.Validation));
 
-    private sealed record ScheduleCursor(int Version, DateTime From, DateTime To, long? RoomId,
-        DateTime StartsAt, long Id);
+    private sealed record ScheduleCursor(
+        int Version,
+        DateTime From,
+        DateTime To,
+        long? RoomId,
+        DateTime StartsAt,
+        long Id);
 }

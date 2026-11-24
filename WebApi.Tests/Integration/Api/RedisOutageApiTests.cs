@@ -17,23 +17,24 @@ public class RedisOutageApiTests
     [TestMethod]
     public async Task StartupWithoutRedis_ServesDatabaseCards_AndSharesLocalLimitAcrossEndpoints()
     {
+        // Arrange
         await using var host = new EnrollmentTestHost();
         var scenario = await host.ScenarioAsync();
         using var created = await host.PostAsync(scenario.UserId, scenario.ClassId);
-        var id = await WaitlistTestData.IdAsync(created);
+        var id = await ApiAssertions.CreatedIdAsync(created);
 
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         var unavailablePort = ((IPEndPoint)listener.LocalEndpoint).Port;
         listener.Stop();
-        var clock = new OutageTestTimeProvider(host.Clock.Now);
+        var clock = new ManualTimeProvider(host.Clock.Now);
         await using var offlineFactory = host.Factory.WithWebHostBuilder(builder =>
         {
             builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(
-                new Dictionary<string, string?>
-                {
-                    ["ConnectionStrings:Redis"] = $"127.0.0.1:{unavailablePort},connectRetry=0,connectTimeout=100,asyncTimeout=100"
-                }));
+                    new Dictionary<string, string?>
+                    {
+                        ["ConnectionStrings:Redis"] = $"127.0.0.1:{unavailablePort},connectRetry=0,connectTimeout=100,asyncTimeout=100"
+                    }));
             builder.ConfigureServices(services =>
             {
                 services.RemoveAll<TimeProvider>();
@@ -60,41 +61,55 @@ public class RedisOutageApiTests
             (HttpMethod.Post, "/enrollments/waitlist", "{}", HttpStatusCode.BadRequest),
             (HttpMethod.Post, "/enrollments/waitlist/9223372036854775807/cancel", null, HttpStatusCode.NotFound)
         };
+
         for (var i = 0; i < 10; i++)
         {
             var (method, path, json, expected) = endpoints[i % endpoints.Length];
             using var request = new HttpRequestMessage(method, path);
-            if (json is not null) request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+
+            if (json is not null)
+                request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+
+            // Act
             using var response = await client.SendAsync(request);
+
+            // Assert
             Assert.AreEqual(expected, response.StatusCode, await response.Content.ReadAsStringAsync());
+
             if (i == 0)
             {
-                var card = await EnrollmentTestHost.JsonAsync(response);
+                var card = await ApiAssertions.JsonAsync(response);
                 Assert.AreEqual(id, card.GetProperty("id").GetInt64());
                 Assert.AreEqual(9, card.GetProperty("pass").GetProperty("remainingVisits").GetInt32());
             }
         }
 
+        // Act
         using var rejected = await client.GetAsync($"/enrollments/{id}");
+
+        // Assert
         Assert.AreEqual(HttpStatusCode.TooManyRequests, rejected.StatusCode);
-        Assert.AreEqual(429, (await EnrollmentTestHost.JsonAsync(rejected)).GetProperty("status").GetInt32());
+        Assert.AreEqual(429, (await ApiAssertions.JsonAsync(rejected)).GetProperty("status").GetInt32());
+
+        // Arrange
         var otherUser = await host.AddUserAsync();
         var otherToken = offlineFactory.Services.GetRequiredService<AccessTokenService>()
             .Create(new User { Id = otherUser, Email = "other@club.test", Role = "user" });
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", otherToken.AccessToken);
-        using var alsoRejected = await client.GetAsync($"/enrollments/{id}");
-        Assert.AreEqual(HttpStatusCode.TooManyRequests, alsoRejected.StatusCode);
-        clock.Advance(TimeSpan.FromSeconds(1));
-        using var allowed = await client.GetAsync($"/enrollments/{id}");
-        Assert.AreEqual(HttpStatusCode.NotFound, allowed.StatusCode);
-    }
 
-    private sealed class OutageTestTimeProvider(DateTimeOffset now) : TimeProvider
-    {
-        private long _ticks;
-        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
-        public override long GetTimestamp() => Interlocked.Read(ref _ticks);
-        public override DateTimeOffset GetUtcNow() => now.AddTicks(GetTimestamp());
-        public void Advance(TimeSpan duration) => Interlocked.Add(ref _ticks, duration.Ticks);
+        // Act
+        using var alsoRejected = await client.GetAsync($"/enrollments/{id}");
+
+        // Assert
+        Assert.AreEqual(HttpStatusCode.TooManyRequests, alsoRejected.StatusCode);
+
+        // Arrange
+        clock.Advance(TimeSpan.FromSeconds(1));
+
+        // Act
+        using var allowed = await client.GetAsync($"/enrollments/{id}");
+
+        // Assert
+        Assert.AreEqual(HttpStatusCode.NotFound, allowed.StatusCode);
     }
 }

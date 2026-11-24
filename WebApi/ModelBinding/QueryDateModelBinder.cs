@@ -9,10 +9,13 @@ public sealed class QueryDateModelBinder : IModelBinder
     public Task BindModelAsync(ModelBindingContext bindingContext)
     {
         var input = bindingContext.ValueProvider.GetValue(bindingContext.ModelName);
-        if (input == ValueProviderResult.None) return Task.CompletedTask;
+
+        if (input == ValueProviderResult.None)
+            return Task.CompletedTask;
 
         bindingContext.ModelState.SetModelValue(bindingContext.ModelName, input);
         var type = Nullable.GetUnderlyingType(bindingContext.ModelType) ?? bindingContext.ModelType;
+
         if (type == typeof(DateOnly) && TryDate(input.FirstValue, out var date))
             bindingContext.Result = ModelBindingResult.Success(date);
         else if (type == typeof(DateTime) && TryInstant(input.FirstValue, out var instant))
@@ -26,6 +29,7 @@ public sealed class QueryDateModelBinder : IModelBinder
     private static bool TryInstant(string? text, out DateTime value)
     {
         value = default;
+
         if (text is null || !Regex.IsMatch(text,
                 @"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,7})?)?(?:Z|[+-]\d{2}:\d{2})?$"))
             return false;
@@ -33,7 +37,9 @@ public sealed class QueryDateModelBinder : IModelBinder
         if (!DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture,
                 DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var instant))
             return false;
+
         value = instant.UtcDateTime;
+
         return true;
     }
 

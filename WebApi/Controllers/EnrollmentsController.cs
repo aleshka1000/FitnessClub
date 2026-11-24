@@ -30,16 +30,19 @@ public class EnrollmentsController : BaseApiController
     public async Task<IActionResult> Get([FromRoute] long id, CancellationToken ct)
     {
         var result = await _enrollmentService.GetAsync(CurrentUserId, id, ct);
+
         return result.IsSuccess ? Ok(EnrollmentDetailsResponse.From(result.Value)) : BusinessProblem(result.Error);
     }
 
     [HttpPost("{id}/seats")]
     [ProducesResponseType(typeof(EnrollmentDetailsResponse), StatusCodes.Status200OK)]
-    public async Task<IActionResult> ChangeSeats([FromRoute] long id,
+    public async Task<IActionResult> ChangeSeats(
+        [FromRoute] long id,
         [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow), Required] ChangeSeatsRequest? request,
         CancellationToken ct)
     {
         var result = await _enrollmentService.ChangeSeatsAsync(CurrentUserId, id, request!.Seats!.Value, ct);
+
         return result.IsSuccess ? Ok(EnrollmentDetailsResponse.From(result.Value)) : BusinessProblem(result.Error);
     }
 
@@ -53,7 +56,8 @@ public class EnrollmentsController : BaseApiController
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status503ServiceUnavailable)]
     public async Task<IActionResult> Create(
         [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow), Required] CreateEnrollmentRequest? request,
-        [FromHeader(Name = "Idempotency-Key"), Required] string? idempotencyKey, CancellationToken ct)
+        [FromHeader(Name = "Idempotency-Key"), Required] string? idempotencyKey,
+        CancellationToken ct)
     {
         var result = await _enrollmentService.CreateAsync(CurrentUserId,
             new CreateEnrollmentCommand(request!.ClassId!.Value, request.Seats!.Value, idempotencyKey!), ct);
@@ -64,6 +68,7 @@ public class EnrollmentsController : BaseApiController
         }
 
         var value = result.Value;
+
         return StatusCode(StatusCodes.Status201Created,
             new CreateEnrollmentResponse(value.Id, value.ClassId, value.Seats, value.Status, value.CreatedAt));
     }
@@ -78,12 +83,17 @@ public class EnrollmentsController : BaseApiController
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status503ServiceUnavailable)]
     public async Task<IActionResult> JoinWaitlist(
         [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow), Required] JoinWaitlistRequest? request,
-        [FromHeader(Name = "Idempotency-Key"), Required] string? idempotencyKey, CancellationToken ct)
+        [FromHeader(Name = "Idempotency-Key"), Required] string? idempotencyKey,
+        CancellationToken ct)
     {
         var result = await _waitlistService.JoinAsync(CurrentUserId,
             new JoinWaitlistCommand(request!.ClassId!.Value, request.Seats!.Value, idempotencyKey!), ct);
-        if (!result.IsSuccess) return BusinessProblem(result.Error);
+
+        if (!result.IsSuccess)
+            return BusinessProblem(result.Error);
+
         var value = result.Value;
+
         return StatusCode(StatusCodes.Status201Created,
             new JoinWaitlistResponse(value.Id, value.ClassId, value.Seats, value.Position, value.CreatedAt));
     }
@@ -99,6 +109,7 @@ public class EnrollmentsController : BaseApiController
     public async Task<IActionResult> CancelWaitlist([FromRoute] long id, CancellationToken ct)
     {
         var result = await _waitlistService.CancelAsync(CurrentUserId, id, ct);
+
         return result.IsSuccess ? Ok(new CancelWaitlistResponse(result.Value.Id, result.Value.Status))
             : BusinessProblem(result.Error);
     }
@@ -114,8 +125,13 @@ public class EnrollmentsController : BaseApiController
     public async Task<IActionResult> Cancel([FromRoute] long id, CancellationToken ct)
     {
         var result = await _enrollmentService.CancelAsync(CurrentUserId, id, ct);
+
         return result.IsSuccess
-            ? Ok(new CancelEnrollmentResponse(result.Value.Id, result.Value.Status, result.Value.RefundedVisits))
+            ? Ok(
+            new CancelEnrollmentResponse(
+                result.Value.Id,
+                result.Value.Status,
+                result.Value.RefundedVisits))
             : BusinessProblem(result.Error);
     }
 }
