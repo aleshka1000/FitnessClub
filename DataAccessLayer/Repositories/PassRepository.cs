@@ -15,4 +15,7 @@ public class PassRepository : GenericRepository<Pass>, IPassRepository
     {
         return await _dbSet.FirstOrDefaultAsync(x => x.UserId == userId, ct);
     }
+
+    public Task<List<Pass>> GetByUsersAsync(IReadOnlyCollection<long> userIds, CancellationToken ct = default) =>
+        _dbSet.Where(x => userIds.Contains(x.UserId)).ToListAsync(ct);
 }

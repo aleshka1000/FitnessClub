@@ -11,6 +11,11 @@ public interface IUnitOfWorkBase
     IGenericRepository<T> GetRepository<T>() where T : class, IEntity;
 
     Task SaveChangesAsync(CancellationToken ct = default);
+
+    Task<IUnitOfWorkTransaction> BeginTransactionAsync(CancellationToken ct = default);
+
+    Task<T> ExecuteWithConcurrencyRetryAsync<T>(Func<CancellationToken, Task<T>> operation,
+        CancellationToken ct = default);
 }
 
 public abstract class UnitOfWorkBase : IUnitOfWorkBase
@@ -57,4 +62,40 @@ public abstract class UnitOfWorkBase : IUnitOfWorkBase
     {
         await DbContext.SaveChangesAsync(ct);
     }
+
+    public async Task<IUnitOfWorkTransaction> BeginTransactionAsync(CancellationToken ct = default)
+    {
+        var transaction = await DbContext.Database.BeginTransactionAsync(ct);
+        return new EfUnitOfWorkTransaction(transaction);
+    }
+
+    public async Task<T> ExecuteWithConcurrencyRetryAsync<T>(Func<CancellationToken, Task<T>> operation,
+        CancellationToken ct = default)
+    {
+        // решение: повторяем всю операцию до пяти раз; затяжной конфликт отдаём как временную недоступность.
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            try
+            {
+                return await operation(ct);
+            }
+            catch (Exception exception) when (IsConcurrencyConflict(exception))
+            {
+                DbContext.ChangeTracker.Clear();
+
+                if (attempt == 4)
+                {
+                    throw new ConcurrencyRetriesExhaustedException(exception);
+                }
+
+                await Task.Delay(Random.Shared.Next(20, 51), ct);
+            }
+        }
+
+        throw new InvalidOperationException("Unreachable concurrency retry state.");
+    }
+
+    protected virtual bool IsConcurrencyConflict(Exception exception) => exception is DbUpdateConcurrencyException;
 }

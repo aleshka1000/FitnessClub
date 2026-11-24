@@ -19,6 +19,11 @@ public class ClassConfiguration : IEntityTypeConfiguration<Class>
         builder.Property(x => x.DurationMinutes).HasColumnName("duration_minutes");
         builder.Property(x => x.Capacity).HasColumnName("capacity");
         builder.Property(x => x.IsCancelled).HasColumnName("is_cancelled");
+        builder.Property(x => x.Version).HasColumnName("xmin").IsRowVersion();
+
+        builder.HasIndex(x => x.RoomId);
+        builder.HasIndex(x => new { x.StartsAt, x.Id }).HasFilter("NOT is_cancelled");
+        builder.HasIndex(x => new { x.RoomId, x.StartsAt, x.Id }).HasFilter("NOT is_cancelled");
 
         builder
             .HasOne(x => x.Room)
