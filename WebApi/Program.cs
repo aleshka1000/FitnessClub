@@ -37,7 +37,13 @@ builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 builder.Services.AddBusinessLogicLayer();
 
 builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
-    ConnectionMultiplexer.Connect(builder.Configuration.GetConnectionString("Redis")!));
+{
+    var options = ConfigurationOptions.Parse(builder.Configuration.GetConnectionString("Redis")!);
+    // решение: Redis не блокирует запуск API; команды при отключении не ждут восстановления в очереди.
+    options.AbortOnConnectFail = false;
+    options.BacklogPolicy = BacklogPolicy.FailFast;
+    return ConnectionMultiplexer.Connect(options);
+});
 
 builder.Services.AddSingleton<ICacheService>(provider =>
     new RedisCacheService(provider.GetRequiredService<IConnectionMultiplexer>(), TimeSpan.FromMinutes(5)));
@@ -45,9 +51,14 @@ builder.Services.AddSingleton<ICacheService>(provider =>
 builder.Services.AddSingleton(new EnrollmentCardCacheOptions(
     $"fitnessclub:{new NpgsqlConnectionStringBuilder(builder.Configuration.GetConnectionString("Postgres")).Database}:v1"));
 
-builder.Services.AddSingleton<IUserRateLimiter>(provider => new RedisUserRateLimiter(
+builder.Services.AddSingleton<RedisUserRateLimiter>(provider => new RedisUserRateLimiter(
     provider.GetRequiredService<IConnectionMultiplexer>(),
     $"fitnessclub:{new NpgsqlConnectionStringBuilder(builder.Configuration.GetConnectionString("Postgres")).Database}:requests"));
+
+builder.Services.AddSingleton<InMemoryFallbackRateLimiter>();
+builder.Services.AddSingleton<IUserRateLimiter>(provider => new ResilientUserRateLimiter(
+    provider.GetRequiredService<RedisUserRateLimiter>(), provider.GetRequiredService<InMemoryFallbackRateLimiter>(),
+    provider.GetRequiredService<ILogger<ResilientUserRateLimiter>>()));
 
 builder.Services.AddSingleton<IPasswordHasher<User>, PasswordHasher<User>>();
 
