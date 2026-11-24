@@ -41,9 +41,10 @@ public class EnrollmentService(IUnitOfWork unitOfWork, TimeProvider timeProvider
                 var scheduledClass = await unitOfWork.Class.GetIncludingCancelledAsync(enrollment.ClassId, attemptCt);
                 if (scheduledClass is null)
                     return Result<EnrollmentDetailsResult>.Failure(new BusinessError(BusinessErrorKind.NotFound));
-                if (scheduledClass.IsCancelled) return DetailsConflict("class-cancelled");
                 var now = timeProvider.GetUtcNow().UtcDateTime;
-                if (now >= scheduledClass.StartsAt) return DetailsConflict("class-started");
+                var classError = ValidateClassState(scheduledClass, now);
+                if (classError is not null)
+                    return Result<EnrollmentDetailsResult>.Failure(classError);
 
                 var delta = seats - enrollment.Seats;
                 if (delta != 0)
@@ -52,10 +53,9 @@ public class EnrollmentService(IUnitOfWork unitOfWork, TimeProvider timeProvider
                         ?? throw new InvalidOperationException("The user has no pass.");
                     if (delta > 0)
                     {
-                        if (pass.ValidUntil < DateOnly.FromDateTime(now)) return DetailsConflict("pass-expired");
-                        var booked = await unitOfWork.Enrollment.GetActiveSeatsAsync(scheduledClass.Id, attemptCt);
-                        if (booked + delta > scheduledClass.Capacity) return DetailsConflict("capacity-exceeded");
-                        if (pass.RemainingVisits < delta) return DetailsConflict("pass-exhausted");
+                        var allocationError = await ValidateSeatAllocationAsync(scheduledClass, pass, delta, now, attemptCt);
+                        if (allocationError is not null)
+                            return Result<EnrollmentDetailsResult>.Failure(allocationError);
                     }
 
                     enrollment.Seats = seats;
@@ -140,35 +140,16 @@ public class EnrollmentService(IUnitOfWork unitOfWork, TimeProvider timeProvider
         var now = timeProvider.GetUtcNow().UtcDateTime;
 
         // решение: при нескольких отказах сначала проверяем занятие, затем срок, вместимость и остаток посещений.
-        if (scheduledClass.IsCancelled)
-        {
-            return Conflict("class-cancelled");
-        }
-
-        if (now >= scheduledClass.StartsAt)
-        {
-            return Conflict("class-started");
-        }
+        var classError = ValidateClassState(scheduledClass, now);
+        if (classError is not null)
+            return Result<EnrollmentCreationResult>.Failure(classError);
 
         var pass = await unitOfWork.Pass.GetByUserAsync(userId, ct)
             ?? throw new InvalidOperationException("The user has no pass.");
 
-        if (pass.ValidUntil < DateOnly.FromDateTime(now))
-        {
-            return Conflict("pass-expired");
-        }
-
-        var activeSeats = await unitOfWork.Enrollment.GetActiveSeatsAsync(scheduledClass.Id, ct);
-
-        if (activeSeats + command.Seats > scheduledClass.Capacity)
-        {
-            return Conflict("capacity-exceeded");
-        }
-
-        if (pass.RemainingVisits < command.Seats)
-        {
-            return Conflict("pass-exhausted");
-        }
+        var allocationError = await ValidateSeatAllocationAsync(scheduledClass, pass, command.Seats, now, ct);
+        if (allocationError is not null)
+            return Result<EnrollmentCreationResult>.Failure(allocationError);
 
         unitOfWork.Class.MarkForConcurrencyCheck(scheduledClass);
         pass.RemainingVisits -= command.Seats;
@@ -238,6 +219,29 @@ public class EnrollmentService(IUnitOfWork unitOfWork, TimeProvider timeProvider
         {
             return Result<EnrollmentCancellationResult>.Failure(new BusinessError(BusinessErrorKind.Unavailable));
         }
+    }
+
+    private static BusinessError? ValidateClassState(Class scheduledClass, DateTime now)
+    {
+        if (scheduledClass.IsCancelled)
+            return new BusinessError(BusinessErrorKind.Conflict, "class-cancelled");
+        if (now >= scheduledClass.StartsAt)
+            return new BusinessError(BusinessErrorKind.Conflict, "class-started");
+        return null;
+    }
+
+    private async Task<BusinessError?> ValidateSeatAllocationAsync(Class scheduledClass, Pass pass,
+        int additionalSeats, DateTime now, CancellationToken ct)
+    {
+        if (pass.ValidUntil < DateOnly.FromDateTime(now))
+            return new BusinessError(BusinessErrorKind.Conflict, "pass-expired");
+
+        var activeSeats = await unitOfWork.Enrollment.GetActiveSeatsAsync(scheduledClass.Id, ct);
+        if (activeSeats + additionalSeats > scheduledClass.Capacity)
+            return new BusinessError(BusinessErrorKind.Conflict, "capacity-exceeded");
+        if (pass.RemainingVisits < additionalSeats)
+            return new BusinessError(BusinessErrorKind.Conflict, "pass-exhausted");
+        return null;
     }
 
     private static Result<EnrollmentCreationResult> Success(Enrollment enrollment) =>

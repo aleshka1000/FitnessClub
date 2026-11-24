@@ -47,16 +47,9 @@ public class WaitlistService(IUnitOfWork unitOfWork, TimeProvider timeProvider,
                 var scheduledClass = await unitOfWork.Class.GetIncludingCancelledAsync(command.ClassId, attemptCt);
                 if (scheduledClass is null) return Failure<WaitlistJoinResult>(BusinessErrorKind.NotFound);
                 var now = Now();
-                if (scheduledClass.IsCancelled) return Failure<WaitlistJoinResult>(BusinessErrorKind.Conflict, "class-cancelled");
-                if (now >= scheduledClass.StartsAt) return Failure<WaitlistJoinResult>(BusinessErrorKind.Conflict, "class-started");
-                // решение: невыполнимая по полной вместимости заявка не должна навсегда блокировать очередь.
-                if (command.Seats > scheduledClass.Capacity)
-                    return Failure<WaitlistJoinResult>(BusinessErrorKind.Conflict, "capacity-exceeded");
-                if (await unitOfWork.Waitlist.IsWaitingAsync(userId, command.ClassId, attemptCt))
-                    return Failure<WaitlistJoinResult>(BusinessErrorKind.Conflict, "already-waiting");
-                var booked = await unitOfWork.Enrollment.GetActiveSeatsAsync(command.ClassId, attemptCt);
-                if (scheduledClass.Capacity - booked >= command.Seats)
-                    return Failure<WaitlistJoinResult>(BusinessErrorKind.Conflict, "seats-available");
+                var validationError = await ValidateJoinAsync(userId, command, scheduledClass, now, attemptCt);
+                if (validationError is not null)
+                    return Result<WaitlistJoinResult>.Failure(validationError);
 
                 var entry = await unitOfWork.Waitlist.CreateAsync(new WaitlistEntry
                 {
@@ -107,6 +100,24 @@ public class WaitlistService(IUnitOfWork unitOfWork, TimeProvider timeProvider,
         {
             return Failure<WaitlistCancelResult>(BusinessErrorKind.Unavailable);
         }
+    }
+
+    private async Task<BusinessError?> ValidateJoinAsync(long userId, JoinWaitlistCommand command,
+        Class scheduledClass, DateTime now, CancellationToken ct)
+    {
+        if (scheduledClass.IsCancelled)
+            return new BusinessError(BusinessErrorKind.Conflict, "class-cancelled");
+        if (now >= scheduledClass.StartsAt)
+            return new BusinessError(BusinessErrorKind.Conflict, "class-started");
+        // решение: невыполнимая по полной вместимости заявка не должна навсегда блокировать очередь.
+        if (command.Seats > scheduledClass.Capacity)
+            return new BusinessError(BusinessErrorKind.Conflict, "capacity-exceeded");
+        if (await unitOfWork.Waitlist.IsWaitingAsync(userId, command.ClassId, ct))
+            return new BusinessError(BusinessErrorKind.Conflict, "already-waiting");
+        var booked = await unitOfWork.Enrollment.GetActiveSeatsAsync(command.ClassId, ct);
+        if (scheduledClass.Capacity - booked >= command.Seats)
+            return new BusinessError(BusinessErrorKind.Conflict, "seats-available");
+        return null;
     }
 
     private DateTime Now()
