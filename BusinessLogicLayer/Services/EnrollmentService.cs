@@ -1,24 +1,73 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using BusinessLogicLayer.Interfaces;
 using BusinessLogicLayer.Models;
+using Common.Caching;
 using Common.Database.UnitOfWork;
 using DataAccessLayer.Entities;
 using DataAccessLayer.UnitOfWork;
+using Microsoft.Extensions.Logging;
+using StackExchange.Redis;
 
 namespace BusinessLogicLayer.Services;
 
 public class EnrollmentService(IUnitOfWork unitOfWork, TimeProvider timeProvider,
-    IWaitlistPromotionService promotionService) : IEnrollmentService
+    IWaitlistPromotionService promotionService, ICacheService cache,
+    EnrollmentCardCacheOptions cacheOptions, ILogger<EnrollmentService> logger) : IEnrollmentService
 {
     private const string Operation = "create-enrollment";
+    private static readonly TimeSpan CardCacheTtl = TimeSpan.FromMinutes(5);
 
     public async Task<Result<EnrollmentDetailsResult>> GetAsync(long userId, long id, CancellationToken ct = default)
     {
+        var versions = await unitOfWork.Enrollment.GetCardVersionsAsync(id, userId, ct);
+        if (versions is null)
+            return Result<EnrollmentDetailsResult>.Failure(new BusinessError(BusinessErrorKind.NotFound));
+
+        var key = GetCardCacheKey(userId, id, versions.EnrollmentVersion, versions.PassVersion);
+        var cached = await GetCachedCardAsync(key, ct);
+        if (cached is not null)
+            return Result<EnrollmentDetailsResult>.Success(cached);
+
         var data = await unitOfWork.Enrollment.GetDetailsAsync(id, userId, ct);
-        return data is null
-            ? Result<EnrollmentDetailsResult>.Failure(new BusinessError(BusinessErrorKind.NotFound))
-            : Result<EnrollmentDetailsResult>.Success(EnrollmentDetailsResult.From(data));
+        if (data is null)
+            return Result<EnrollmentDetailsResult>.Failure(new BusinessError(BusinessErrorKind.NotFound));
+
+        var result = EnrollmentDetailsResult.From(data);
+        // решение: ключ заполнения строим по версиям из того же SQL, что вернул карточку.
+        key = GetCardCacheKey(userId, id, data.EnrollmentVersion, data.PassVersion);
+        await CacheCardAsync(key, result, ct);
+        return Result<EnrollmentDetailsResult>.Success(result);
+    }
+
+    private string GetCardCacheKey(long userId, long id, uint enrollmentVersion, uint passVersion) =>
+        $"{cacheOptions.KeyPrefix}:card:{userId}:{id}:{enrollmentVersion}:{passVersion}";
+
+    private async Task<EnrollmentDetailsResult?> GetCachedCardAsync(string key, CancellationToken ct)
+    {
+        try
+        {
+            return await cache.GetAsync<EnrollmentDetailsResult>(key, ct);
+        }
+        catch (Exception exception) when (exception is RedisException or RedisTimeoutException or JsonException)
+        {
+            // решение: ошибка кэша не мешает чтению карточки из PostgreSQL.
+            logger.LogWarning(exception, "Could not read enrollment card cache {Key}.", key);
+            return null;
+        }
+    }
+
+    private async Task CacheCardAsync(string key, EnrollmentDetailsResult card, CancellationToken ct)
+    {
+        try
+        {
+            await cache.SetAsync(key, card, CardCacheTtl, ct);
+        }
+        catch (Exception exception) when (exception is RedisException or RedisTimeoutException)
+        {
+            logger.LogWarning(exception, "Could not write enrollment card cache {Key}.", key);
+        }
     }
 
     public async Task<Result<EnrollmentDetailsResult>> ChangeSeatsAsync(long userId, long id, int seats,
@@ -67,7 +116,11 @@ public class EnrollmentService(IUnitOfWork unitOfWork, TimeProvider timeProvider
                         await promotionService.PromoteAsync(scheduledClass, TruncateToMicroseconds(now), attemptCt);
                 }
 
-                var result = await GetAsync(userId, id, attemptCt);
+                // решение: незавершённую транзакцию изменения мест в кэш не публикуем.
+                var data = await unitOfWork.Enrollment.GetDetailsAsync(id, userId, attemptCt);
+                var result = data is null
+                    ? Result<EnrollmentDetailsResult>.Failure(new BusinessError(BusinessErrorKind.NotFound))
+                    : Result<EnrollmentDetailsResult>.Success(EnrollmentDetailsResult.From(data));
                 await transaction.CommitAsync(attemptCt);
                 return result;
             }, ct);

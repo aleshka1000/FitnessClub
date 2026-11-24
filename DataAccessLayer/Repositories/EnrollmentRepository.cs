@@ -15,6 +15,15 @@ public class EnrollmentRepository : GenericRepository<Enrollment>, IEnrollmentRe
         _passes = passes;
     }
 
+    public Task<EnrollmentCardVersions?> GetCardVersionsAsync(long id, long userId, CancellationToken ct = default)
+    {
+        return (from enrollment in _dbSet.AsNoTracking()
+                join pass in _passes on enrollment.UserId equals pass.UserId
+                where enrollment.Id == id && enrollment.UserId == userId
+                select new EnrollmentCardVersions(enrollment.Version, pass.Version))
+            .SingleOrDefaultAsync(ct);
+    }
+
     public Task<EnrollmentDetailsData?> GetDetailsAsync(long id, long userId, CancellationToken ct = default)
     {
         return (from enrollment in _dbSet.IgnoreQueryFilters().AsNoTracking()
@@ -23,7 +32,8 @@ public class EnrollmentRepository : GenericRepository<Enrollment>, IEnrollmentRe
                 select new EnrollmentDetailsData(enrollment.Id, enrollment.Status, enrollment.Seats,
                     enrollment.CreatedAt, enrollment.ClassId, enrollment.Class.Title, enrollment.Class.StartsAt,
                     enrollment.Class.DurationMinutes, enrollment.Class.IsCancelled,
-                    enrollment.Class.RoomId, enrollment.Class.Room.Name, pass.RemainingVisits, pass.ValidUntil))
+                    enrollment.Class.RoomId, enrollment.Class.Room.Name, pass.RemainingVisits, pass.ValidUntil,
+                    enrollment.Version, pass.Version))
             .SingleOrDefaultAsync(ct);
     }
 

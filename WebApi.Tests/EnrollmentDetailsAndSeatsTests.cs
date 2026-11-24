@@ -42,14 +42,13 @@ public class EnrollmentDetailsAndSeatsTests
         Assert.AreEqual(HttpStatusCode.Created, second.StatusCode);
         card = await CardAsync(host, scenario.UserId, id);
         Assert.AreEqual(7, card.GetProperty("pass").GetProperty("remainingVisits").GetInt32());
+        await host.DbAsync(db => db.Classes.Where(x => x.Id == scenario.ClassId)
+            .ExecuteUpdateAsync(u => u.SetProperty(x => x.IsCancelled, true)));
         using var cancelled = await host.CancelBookingAsync(scenario.UserId, id);
         card = await CardAsync(host, scenario.UserId, id);
         Assert.AreEqual("cancelled", card.GetProperty("status").GetString());
         Assert.AreEqual(2, card.GetProperty("seats").GetInt32());
         Assert.AreEqual(9, card.GetProperty("pass").GetProperty("remainingVisits").GetInt32());
-        await host.DbAsync(db => db.Classes.Where(x => x.Id == scenario.ClassId)
-            .ExecuteUpdateAsync(u => u.SetProperty(x => x.IsCancelled, true)));
-        card = await CardAsync(host, scenario.UserId, id);
         Assert.IsTrue(card.GetProperty("class").GetProperty("isCancelled").GetBoolean());
     }
 

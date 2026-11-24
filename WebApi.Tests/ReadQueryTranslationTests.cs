@@ -18,7 +18,21 @@ public class ReadQueryTranslationTests
         StringAssert.Contains(sql, "JOIN classes");
         StringAssert.Contains(sql, "JOIN rooms");
         StringAssert.Contains(sql, "user_id");
+        StringAssert.Contains(sql, "xmin");
         Assert.IsFalse(sql.Contains("NOT (", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public async Task CardVersions_TranslateWithoutClassOrRoomJoins()
+    {
+        var sql = await CaptureAsync(db => new EnrollmentRepository(db.Enrollments, db.Passes)
+            .GetCardVersionsAsync(123, 456));
+        StringAssert.Contains(sql, "JOIN passes");
+        StringAssert.Contains(sql, "user_id");
+        StringAssert.Contains(sql, "xmin");
+        Assert.IsFalse(sql.Contains("JOIN classes", StringComparison.Ordinal));
+        Assert.IsFalse(sql.Contains("JOIN rooms", StringComparison.Ordinal));
+        Assert.IsFalse(sql.Contains("remaining_visits", StringComparison.Ordinal));
     }
 
     [TestMethod]

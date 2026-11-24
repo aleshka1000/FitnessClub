@@ -1,12 +1,14 @@
 using BusinessLogicLayer.Interfaces;
 using BusinessLogicLayer.Models;
 using BusinessLogicLayer.Services;
+using Common.Caching;
 using Common.Database.UnitOfWork;
 using DataAccessLayer.Entities;
 using DataAccessLayer.Models;
 using DataAccessLayer.Repositories;
 using DataAccessLayer.UnitOfWork;
 using Moq;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace WebApi.Tests;
 
@@ -106,7 +108,8 @@ public class SeatChangeServiceTests
             enrollments.Setup(x => x.GetActiveSeatsAsync(3, It.IsAny<CancellationToken>())).ReturnsAsync(2);
             enrollments.Setup(x => x.GetDetailsAsync(2, 1, It.IsAny<CancellationToken>())).ReturnsAsync(() =>
                 new EnrollmentDetailsData(2, Enrollment.Status, Enrollment.Seats, Clock.Now.UtcDateTime,
-                    3, "Test", Class.StartsAt, 60, Class.IsCancelled, 4, "Room", Pass.RemainingVisits, Pass.ValidUntil));
+                    3, "Test", Class.StartsAt, 60, Class.IsCancelled, 4, "Room", Pass.RemainingVisits, Pass.ValidUntil,
+                    Enrollment.Version, Pass.Version));
             var passes = new Mock<IPassRepository>();
             passes.Setup(x => x.GetByUserAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(Pass);
             Classes.Setup(x => x.GetIncludingCancelledAsync(3, It.IsAny<CancellationToken>())).ReturnsAsync(Class);
@@ -118,7 +121,9 @@ public class SeatChangeServiceTests
             UnitOfWork.Setup(x => x.ExecuteWithConcurrencyRetryAsync(
                     It.IsAny<Func<CancellationToken, Task<Result<EnrollmentDetailsResult>>>>(), It.IsAny<CancellationToken>()))
                 .Returns((Func<CancellationToken, Task<Result<EnrollmentDetailsResult>>> operation, CancellationToken ct) => operation(ct));
-            Service = new EnrollmentService(UnitOfWork.Object, Clock, Promotion.Object);
+            Service = new EnrollmentService(UnitOfWork.Object, Clock, Promotion.Object,
+                new Mock<ICacheService>(MockBehavior.Strict).Object,
+                new EnrollmentCardCacheOptions("test"), NullLogger<EnrollmentService>.Instance);
         }
     }
 }

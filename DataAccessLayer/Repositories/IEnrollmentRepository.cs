@@ -6,6 +6,8 @@ namespace DataAccessLayer.Repositories;
 
 public interface IEnrollmentRepository : IGenericRepository<Enrollment>
 {
+    Task<EnrollmentCardVersions?> GetCardVersionsAsync(long id, long userId, CancellationToken ct = default);
+
     Task<EnrollmentDetailsData?> GetDetailsAsync(long id, long userId, CancellationToken ct = default);
 
     Task<List<Enrollment>> GetByUserAsync(long userId, CancellationToken ct = default);

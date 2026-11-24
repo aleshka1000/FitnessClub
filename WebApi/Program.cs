@@ -1,5 +1,6 @@
 using System.Text;
 using BusinessLogicLayer.DependencyInjection;
+using BusinessLogicLayer.Models;
 using Common.Caching;
 using DataAccessLayer;
 using DataAccessLayer.Entities;
@@ -40,6 +41,9 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
 
 builder.Services.AddSingleton<ICacheService>(provider =>
     new RedisCacheService(provider.GetRequiredService<IConnectionMultiplexer>(), TimeSpan.FromMinutes(5)));
+
+builder.Services.AddSingleton(new EnrollmentCardCacheOptions(
+    $"fitnessclub:{new NpgsqlConnectionStringBuilder(builder.Configuration.GetConnectionString("Postgres")).Database}:v1"));
 
 builder.Services.AddSingleton<IUserRateLimiter>(provider => new RedisUserRateLimiter(
     provider.GetRequiredService<IConnectionMultiplexer>(),
