@@ -43,8 +43,6 @@ public class EnrollmentService(
 
         var result = EnrollmentDetailsResult.From(data);
 
-        // решение: ключ строим по версиям из полной выборки карточки:
-        // после предварительной проверки бронь или абонемент могли измениться.
         key = GetCardCacheKey(userId, id, data.EnrollmentVersion, data.PassVersion);
         await CacheCardAsync(key, result, ct);
 
@@ -62,7 +60,6 @@ public class EnrollmentService(
         }
         catch (Exception exception) when (exception is RedisException or RedisTimeoutException or JsonException)
         {
-            // решение: ошибку кэша считаем промахом, чтобы его сбой не прерывал чтение карточки.
             logger.LogWarning(exception, "Could not read enrollment card cache {Key}.", key);
 
             return null;
@@ -100,7 +97,6 @@ public class EnrollmentService(
                 if (enrollment is null)
                     return Result<EnrollmentDetailsResult>.Failure(new BusinessError(BusinessErrorKind.NotFound));
 
-                // решение: при нескольких причинах отказа отмена брони имеет приоритет над состоянием занятия.
                 if (enrollment.Status == "cancelled")
                     return DetailsConflict("enrollment-cancelled");
 
@@ -146,7 +142,6 @@ public class EnrollmentService(
                 }
 
                 // решение: после продвижения очереди читаем карточку из БД — оно могло изменить абонемент клиента.
-                // Кэш обходим, чтобы не записывать в Redis данные до успешной фиксации транзакции.
                 var data = await unitOfWork.Enrollment.GetDetailsAsync(id, userId, attemptCt);
                 var result = data is null
                     ? Result<EnrollmentDetailsResult>.Failure(new BusinessError(BusinessErrorKind.NotFound))
@@ -201,13 +196,11 @@ public class EnrollmentService(
 
         if (!claim.IsNew)
         {
-            // решение: тот же ключ с другими classId или seats отклоняем с idempotency-key-reused.
             if (claim.Request.ClassId != command.ClassId || claim.Request.Seats != command.Seats)
             {
                 return Conflict("idempotency-key-reused");
             }
 
-            // решение: при повторе возвращаем текущее состояние брони, не сохраняя снимок первоначального ответа.
             var existing = await unitOfWork.Enrollment.GetForUserAsync(
                 claim.Request.EnrollmentId ?? throw new InvalidOperationException("Incomplete idempotency record."),
                 userId, ct);
@@ -231,7 +224,6 @@ public class EnrollmentService(
 
         var now = timeProvider.GetUtcNow().UtcDateTime;
 
-        // решение: при нескольких отказах приоритет — отмена занятия, начало, срок абонемента, места, посещения.
         var classError = ValidateClassState(scheduledClass, now);
 
         if (classError is not null)
@@ -284,7 +276,6 @@ public class EnrollmentService(
                 if (enrollment is null)
                     return Result<EnrollmentCancellationResult>.Failure(new BusinessError(BusinessErrorKind.NotFound));
 
-                // решение: при повторной отмене возвращаем refundedVisits: 0, поскольку первый размер возврата не сохраняем.
                 if (enrollment.Status == "cancelled")
                     return Result<EnrollmentCancellationResult>.Success(new EnrollmentCancellationResult(
                             id,
@@ -371,7 +362,6 @@ public class EnrollmentService(
 
     private static DateTime TruncateToMicroseconds(DateTime value)
     {
-        // решение: усекаем время до микросекунд, чтобы createdAt из памяти и PostgreSQL совпадал.
         return new DateTime(value.Ticks - value.Ticks % TimeSpan.TicksPerMicrosecond, DateTimeKind.Utc);
     }
 }

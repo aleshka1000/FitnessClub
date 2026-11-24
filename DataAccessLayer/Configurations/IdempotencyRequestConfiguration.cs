@@ -23,7 +23,6 @@ public class IdempotencyRequestConfiguration : IEntityTypeConfiguration<Idempote
         builder.Property(x => x.WaitlistEntryId).HasColumnName("waitlist_entry_id");
         builder.Property(x => x.CreatedAt).HasColumnName("created_at").HasColumnType("timestamp with time zone");
 
-        // решение: индексируем SHA-256, чтобы длина клиентского ключа не ограничивалась размером B-tree записи.
         builder.HasIndex(x => new { x.UserId, x.Operation, x.KeyHash }).IsUnique();
         builder.HasOne<User>().WithMany().HasForeignKey(x => x.UserId);
         builder.HasOne<Enrollment>().WithMany().HasForeignKey(x => x.EnrollmentId)

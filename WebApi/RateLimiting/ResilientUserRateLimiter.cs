@@ -26,8 +26,6 @@ public sealed class ResilientUserRateLimiter(
         {
             ct.ThrowIfCancellationRequested();
 
-            // решение: при сбое Redis используем общий резерв: 10 запросов за скользящую секунду на экземпляр API.
-            // Это защита нагрузки без синхронизации с Redis, вместо обычного лимита на пользователя.
             if (Interlocked.Exchange(ref _usingFallback, 1) == 0)
                 logger.LogWarning(
                     exception,

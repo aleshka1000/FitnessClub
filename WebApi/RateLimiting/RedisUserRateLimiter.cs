@@ -4,7 +4,6 @@ namespace WebApi.RateLimiting;
 
 public sealed class RedisUserRateLimiter(IConnectionMultiplexer connection, string keyPrefix) : IUserRateLimiter
 {
-    // решение: Lua атомарно считает запросы за последние 60 секунд; время Redis исключает расхождения часов API.
     private const string Script = """
         local time = redis.call('TIME')
         local now = tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)

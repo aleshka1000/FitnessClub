@@ -34,7 +34,6 @@ public class WaitlistService(
 
                 if (!claim.IsNew)
                 {
-                    // решение: тот же ключ с другими classId или seats отклоняем с idempotency-key-reused.
                     if (claim.Request.ClassId != command.ClassId || claim.Request.Seats != command.Seats)
                         return Failure<WaitlistJoinResult>(BusinessErrorKind.Conflict, "idempotency-key-reused");
 

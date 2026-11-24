@@ -52,8 +52,6 @@ public class ScheduleService(IUnitOfWork unitOfWork) : IScheduleService
 
     private static string CreateContinuationToken(ScheduleQuery query, ScheduleItemResult lastItem)
     {
-        // решение: токен Base64URL хранит позицию и фильтры, чтобы не продолжать выборку с другими условиями.
-        // Размер страницы в токен не включаем, разрешая менять его между запросами.
         return Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(new ScheduleCursor(1,
                     query.From, query.To, query.RoomId, lastItem.StartsAt, lastItem.ClassId)))
             .TrimEnd('=').Replace('+', '-').Replace('/', '_');
